@@ -1,9 +1,8 @@
-import math
 import pysam
-
+from utils import *
 def is_translocation(svt):
-    DELLY_SVT_TRANS = 5
-    return DELLY_SVT_TRANS <= svt < 9
+    SVT_TRANS = 5
+    return SVT_TRANS <= svt < 9
 
 def is_rec_translocation(rec):
     return rec.reference_id != rec.next_reference_id
@@ -235,21 +234,6 @@ def _svSizeCheck(s, e, svt, inslen=None):
     elif svt == 4:
         return inslen >= 15 if inslen else True
     return True
-
-
-# getSVType
-def getSVType(rec):
-    if not rec.flag & 16:  # BAM_FREVERSE
-        if not rec.flag & 32:
-            return 0  # BAM_FMREVERSE
-        else:
-            return 2 if rec.pos < rec.mpos else 3
-    else:
-        if not rec.flag & 32:  # BAM_FMREVERSE
-            return 2 if rec.pos > rec.mpos else 3
-        else:
-            return 1
-
 
 def isizeMappingPos(rec, maxISizeCutoff):
     if is_rec_translocation(rec):

@@ -1,6 +1,8 @@
 from utils import *
-from utilsPE import *
+import numpy as np
+from clusterPE import *
 import pysam
+import hashlib
 def hash_sr(rec):
     return hashlib.md5(str(rec).encode()).hexdigest()
 
@@ -14,12 +16,12 @@ def getVariability(config, lib):
     return overall_variability
 
 def scanPE(c: Config, validRegions, svs: List[StructuralVariantRecord],
-                srSVs: List[StructuralVariantRecord], srStore, sampleLib: LibraryInfo):
+                srSVs: List[StructuralVariantRecord], srStore, sampleLib: List[LibraryInfo]):
     samfile = [pysam.AlignmentFile(file, "rb") for file in c.files]
     hdr = samfile[0].header
 
     # Bam alignment record vector
-    bamRecords = [ list() for _ in range(2 * DELLY_SVT_TRANS)]
+    bamRecords = [ list() for _ in range(2 * SVT_TRANS)]
     # Iterate all samples
     for file_c in range(len(c.files)):
         matetra = [{} for _ in range(len(c.files))]
@@ -114,6 +116,3 @@ def scanPE(c: Config, validRegions, svs: List[StructuralVariantRecord],
         bamRecords[svt].sort(key=cmp_to_key(SortBamRecords))
         # Cluster
         clusterPR(c, bamRecords[svt], svs, varisize, svt)
-
-    return bamRecords,svs
-

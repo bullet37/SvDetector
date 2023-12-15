@@ -1,13 +1,10 @@
-import pathlib
+# Config
 from typing import List, Dict, Set
 from functools import cmp_to_key
-import hashlib
-import heapq
-import copy
-import datetime
 import numpy as np
-
-DELLY_SVT_TRANS = 5
+import pysam
+import sys , os
+SVT_TRANS = 5
 
 class Config:
     def __init__(self):
@@ -32,11 +29,11 @@ class Config:
         self.hasDumpFile = False
         self.svtset = set()
         self.aliscore = DnaScore(5, -4, -10, -1)
-        self.outfile = pathlib.Path('')
-        self.vcffile = pathlib.Path('')
-        self.genome = pathlib.Path('')
-        self.exclude = pathlib.Path('')
-        self.dumpfile = pathlib.Path('')
+        self.outfile = ''
+        self.vcffile = ''
+        self.genome = ''
+        self.exclude = ''
+        self.dumpfile = ''
         self.files = []
         self.sampleName = []
 
@@ -44,6 +41,155 @@ class Config:
         print("Config Information:")
         for key, value in self.__dict__.items():
             print(f"{key}: {value}")
+
+    def _set_svtset(self, svtype):
+        SVT_TRANS = 5
+        if svtype == "ALL":
+          return True
+        else:
+          svtypes = svtype.split(',')
+          for tok in svtypes:
+              if tok == "DEL":
+                  self.svtset.add(2)
+              elif tok == "INS":
+                  self.svtset.add(4)
+              elif tok == "DUP":
+                  self.svtset.add(3)
+              elif tok == "INV":
+                  self.svtset.add(0)
+                  self.svtset.add(1)
+              elif tok == "INV_3to3":
+                  self.svtset.add(0)
+              elif tok == "INV_5to5":
+                  self.svtset.add(1)
+              elif tok == "BND":
+                  self.svtset.update(range(SVT_TRANS, SVT_TRANS + 4))
+              elif tok == "BND_3to3":
+                  self.svtset.add(SVT_TRANS + 0)
+              elif tok == "BND_5to5":
+                  self.svtset.add(SVT_TRANS + 1)
+              elif tok == "BND_3to5":
+                  self.svtset.add(SVT_TRANS + 2)
+              elif tok == "BND_5to3":
+                  self.svtset.add(SVT_TRANS + 3)
+              else:
+                  return False
+          return True
+
+    def check(self):
+      if self.exclude:
+          if not (os.path.exists(self.exclude) and os.path.isfile(self.exclude) and os.path.getsize(self.exclude) > 0):
+              print(f"Exclude file is missing: {self.exclude}", file=sys.stderr)
+              sys.exit(1)
+          self.hasExcludeFile = True
+
+      if not (os.path.exists(self.genome) and os.path.isfile(self.genome) and os.path.getsize(self.genome) > 0):
+        print(f"Reference file is missing: {self.genome}", file=sys.stderr)
+        sys.exit(1)
+
+      if self.vcffile:
+          if not (os.path.exists(self.vcffile) and os.path.isfile(self.vcffile) and os.path.getsize(self.vcffile) > 0):
+              print(f"Input VCF/BCF file is missing: {self.vcffile}", file=sys.stderr)
+              sys.exit(1)
+          try:
+              with pysam.VariantFile(self.vcffile, "r") as ifile:
+                  hdr = ifile.header
+          except Exception as e:
+              print(f"Fail to open file {self.vcffile}: {e}", file=sys.stderr)
+              sys.exit(1)
+          self.hasVcfFile = True
+
+      # if not self.outfile:
+      #     self.outfile = "-"
+      # else:
+      #     if self.outfile != "-":
+      #         if not _outfileValid(self.outfile):  # Todo
+      #             sys.exit(1)
+      if self.minGenoQual < 5:
+          self.minGenoQual = 5
+
+      for file_c, file_path in enumerate(self.files):
+          if not (os.path.exists(file_path) and os.path.isfile(file_path) and os.path.getsize(file_path) > 0):
+              print(f"Alignment file is missing: {file_path}", file=sys.stderr)
+              sys.exit(1)
+          try:
+              samfile = pysam.AlignmentFile(file_path, "rb")
+              hdr = samfile.header
+          except IOError as e:
+              print(f"Fail to open file {file_path}: {e}", file=sys.stderr)
+              sys.exit(1)
+          n_targets = len(hdr.references)
+          if self.nchr == 0:
+              self.nchr = n_targets
+          elif self.nchr != n_targets:
+              print("BAM files have different number of chromosomes!", file=sys.stderr)
+              sys.exit(1)
+          with pysam.FastaFile(self.genome) as fai:
+              for ref_name in hdr.references:
+                  if ref_name not in fai.references:
+                      print(f"BAM file chromosome {ref_name} is NOT present in your reference file {self.genome}", file=sys.stderr)
+                      sys.exit(1)
+          samfile.close()
+
+    def setup(self, args):
+      self.genome = args.genome
+      self.exclude = args.exclude
+      self.outfile = args.outfile
+      self.minMapQual = args.map_qual
+      self.minTraQual = args.qual_tra
+      self.madCutoff = args.mad_cutoff
+      self.minClip = args.minclip
+      self.minRefSep = args.minrefsep
+      self.maxReadSep = args.maxreadsep
+      self.vcffile = args.vcffile
+      self.minGenoQual = args.geno_qual
+      self.dumpfile = args.dump
+      self.maxGenoReadCount = args.max_geno_count
+      self.files = args.input_files
+      self.graphPruning = args.pruning
+
+      self.aliscore = DnaScore(5, -4, -10, -1)
+      self.hasDumpFile = bool(args.dump)
+      self.minCliqueSize = max(2, args.min_clique_size)
+      self.minTraQual = max(self.minMapQual, args.qual_tra)
+
+      if not self._set_svtset(args.svtype):
+        print("Please specify a valid SV type, i.e., -t INV or -t DEL,INV without spaces.")
+        sys.exit(1)
+
+      for file_c, file_path in enumerate(self.files):
+        try:
+            samfile = pysam.AlignmentFile(file_path, "rb")
+            hdr = samfile.header
+        except IOError as e:
+            print(f"Fail to open file {file_path}: {e}", file=sys.stderr)
+            sys.exit(1)
+        sample_name = "unknown"
+        sample_name = self._get_SM_tag(hdr.text, os.path.splitext(os.path.basename(file_path))[0])
+        self.sampleName.append(sample_name)
+        samfile.close()
+
+    def _get_SM_tag(self, header, file_name):
+        sm_identifiers = set()
+        rg_present = False
+        lines = header.split('\n')
+        for line in lines:
+            if line.startswith("@RG"):
+                keyvals = line.split("\t")
+                for keyval in keyvals:
+                    if ":" in keyval:
+                        field, value = keyval.split(":", 1)
+                        if field == "SM":
+                            rg_present = True
+                            sm_identifiers.add(value)
+
+        if not rg_present:
+            return file_name
+        elif len(sm_identifiers) == 1:
+            return next(iter(sm_identifiers))
+        elif len(sm_identifiers) > 1:
+            print("Warning: Multiple sample names (@RG:SM) present in the BAM file!", file=sys.stderr)
+            return next(iter(sm_identifiers))
 
 
 class DnaScore:
@@ -89,6 +235,19 @@ class StructuralVariantRecord:
         for key, value in self.__dict__.items():
             print(f"{key}: {value}")
 
+def sort_svs(sv1: StructuralVariantRecord, sv2: StructuralVariantRecord):
+    if sv1.chr != sv2.chr:
+        return sv1.chr < sv2.chr
+    if sv1.svStart != sv2.svStart:
+        return sv1.svStart < sv2.svStart
+    if sv1.chr2 != sv2.chr2:
+        return sv1.chr2 < sv2.chr2
+    if sv1.svEnd != sv2.svEnd:
+        return sv1.svEnd < sv2.svEnd
+    if sv1.peSupport != sv2.peSupport:
+        return sv1.peSupport > sv2.peSupport
+    return sv1.srSupport > sv2.srSupport
+
 class LibraryInfo:
     def __init__(self, rs=0, median=0, mad=0, minNormalISize=0,
                  minISizeCutoff=0, maxNormalISize=0, maxISizeCutoff=0, abnormal_pairs=0):
@@ -109,8 +268,8 @@ class LibraryInfo:
 
 
 def is_translocation(svt):
-    DELLY_SVT_TRANS = 5
-    return DELLY_SVT_TRANS <= svt < 9
+    SVT_TRANS = 5
+    return SVT_TRANS <= svt < 9
 
 class EdgeRecord:
     def __init__(self,  weight: int,  source: int,  target: int):
@@ -127,7 +286,7 @@ TEdgeRecord = EdgeRecord
 TEdgeList = List[TEdgeRecord]
 TCompEdgeList = Dict[int, TEdgeList]
 
-def sort_edge_records(e1, e2):
+def sort_edge_records(e1: EdgeRecord, e2: EdgeRecord):
     if e1.weight < e2.weight:
         return -1
     elif e1.weight > e2.weight:
@@ -154,6 +313,18 @@ def sv_size_check(start, end, svt):
         return end - start >= 100
     else:
         return True
+
+def getSVType(rec):
+    if not rec.flag & 16:  # BAM_FREVERSE
+        if not rec.flag & 32:
+            return 0  # BAM_FMREVERSE
+        else:
+            return 2 if rec.pos < rec.mpos else 3
+    else:
+        if not rec.flag & 32:  # BAM_FMREVERSE
+            return 2 if rec.pos > rec.mpos else 3
+        else:
+            return 1
 
 class Interval:
     def __init__(self, start, end):
@@ -207,142 +378,3 @@ class IntervalSet:
 
     def __iter__(self):
         return iter(self.intervals)
-
-
-import pysam
-
-def bam_name2id(bamfile, ref_name):
-    with pysam.AlignmentFile(bamfile, "rb") as bam:
-        ref_id = bam.get_tid(ref_name)
-        return ref_id
-
-def getLibraryParams(c, validRegions, sampleLib):
-    samfiles = [pysam.AlignmentFile(f, 'r') for f in c.files]
-    for f in c.files:
-        pysam.index(f)
-    for file_c, file_name in enumerate(c.files):
-        maxAlignmentsScreened = 10000000
-        maxNumAlignments = 1000000
-        minNumAlignments = 1000
-        alignmentCount = 0
-        processedNumPairs = 0
-        processedNumReads = 0
-        rplus = 0
-        nonrplus = 0
-        vecISize = []
-        readSize = []
-
-        libCharacterized = False
-        samfile = samfiles[file_c]
-        for refIndex, refname in enumerate(samfile.references):
-            if not validRegions[refIndex]:
-                continue
-            for vRIt in validRegions[refIndex]:
-                for rec in samfile.fetch(refname, vRIt[0], vRIt[1]):
-                    # 是否为次要的对齐 rec.is_secondary， rec.tlen = insert size
-                    if not rec.is_read2 and rec.infer_read_length() < 65000:
-                        if rec.is_secondary or rec.is_qcfail or rec.is_duplicate or rec.is_supplementary or rec.is_unmapped:
-                            continue
-                        if alignmentCount > maxAlignmentsScreened or (processedNumReads >= maxNumAlignments and processedNumPairs == 0) or processedNumPairs >= maxNumAlignments:
-                            libCharacterized = True
-                            break
-                        alignmentCount += 1
-
-                        if processedNumReads < maxNumAlignments:
-                            readSize.append(rec.infer_read_length())
-                            processedNumReads += 1
-
-                        if rec.is_paired and not rec.mate_is_unmapped and rec.rname == rec.mrnm:
-                            if processedNumPairs < maxNumAlignments:
-                                vecISize.append(abs(rec.tlen))
-                                if getSVType(rec) == 2:
-                                    rplus += 1
-                                else:
-                                    nonrplus += 1
-                                processedNumPairs += 1
-                if libCharacterized:
-                    break
-            if libCharacterized:
-                break
-
-        if processedNumReads >= minNumAlignments:
-            readSize.sort()
-            sampleLib[file_c].rs = readSize[len(readSize) // 2] # Median
-
-        if processedNumPairs >= minNumAlignments:
-            vecISize.sort()
-            median = vecISize[len(vecISize) // 2]
-            absDev = [abs(i - median) for i in vecISize]
-            absDev.sort()
-            mad = absDev[len(absDev) // 2]
-
-            if 50 <= median <= 100000:
-                if rplus < nonrplus:
-                    print(f"Warning: Sample has a non-default paired-end layout! File: {file_name}")
-                    print("The expected paired-end orientation is ---Read1---> <---Read2--- which is the default illumina paired-end layout.")
-                else:
-                    lib = sampleLib[file_c]
-                    lib.median = median
-                    lib.mad = mad  # Median Absolute Deviation
-                    lib.maxNormalISize = median + (c.madNormalCutoff * mad)  # 正常范围threshold
-                    lib.minNormalISize = max(median - (c.madNormalCutoff * mad), 0)
-                    lib.maxISizeCutoff = max(median + (c.madCutoff * mad), max(2 * lib.rs, 500)) # 一个异常插入片段的阈值
-                    lib.minISizeCutoff = max(median - (c.madCutoff * mad), 0)
-
-def _parseExcludeIntervals(c, samfile, validRegions):
-    n_targets = len(samfile.references)
-    exclg = [set() for _ in range(n_targets)]
-    valid_chr = [True] * n_targets
-
-    if c.hasExcludeFile:
-        with open(c.exclude, 'r') as chr_file:
-            for line in chr_file:
-                tokens = line.split()
-                if tokens:
-                    chr_name = tokens[0]
-                    tid = bam_name2id(samfile, chr_name)
-                    if tid >= 0:
-                        if len(tokens) > 1:
-                            try:
-                                start = int(tokens[1])
-                            except ValueError:
-                                print("Exclude file needs to be in tab-delimited format: chr, start, end")
-                                print(f"Offending line: {line}")
-                                return False
-                            if len(tokens) > 2:
-                                end = int(tokens[2])
-                                if start < end:
-                                    exclg[tid].add(Interval.right_open(start, end))
-                                else:
-                                    print("Exclude file needs to be in tab-delimited format (chr, start, end) and start < end.")
-                                    print(f"Offending line: {line}")
-                                    return False
-                            else:
-                                print("Exclude file needs to be in tab-delimited format: chr, start, end")
-                                print(f"Offending line: {line}")
-                                return False
-                        else:
-                            valid_chr[tid] = False
-
-    for i in range(n_targets):
-        if not valid_chr[i]:
-            continue
-        istart = 0
-        for it in sorted(exclg[i], key=lambda x: x.start):
-            if istart + 1 < it.lower():
-                validRegions[i].insert(Interval.right_open(istart, it.lower() - 1))
-            istart = it.upper()
-        if istart + 1 < samfile.lengths[i]:
-            validRegions[i].insert(Interval.right_open(istart, samfile.lengths[i]))
-    return True
-
-
-def getMedian(elements):
-    elements = sorted(elements)
-    middle = len(elements) // 2
-    return elements[middle]
-
-
-def getPercentile(vec, p):
-    idx = int(len(vec) * p)
-    return sorted(vec)[idx]
