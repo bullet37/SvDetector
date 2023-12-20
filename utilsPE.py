@@ -7,6 +7,96 @@ def is_translocation(svt):
 def is_rec_translocation(rec):
     return rec.reference_id != rec.next_reference_id
 
+class LibraryInfo:
+    def __init__(self, rs=0, median=0, mad=0, minNormalISize=0,
+                 minISizeCutoff=0, maxNormalISize=0, maxISizeCutoff=0, abnormal_pairs=0):
+        self.rs = rs
+        self.median = 0
+        self.mad = 0
+        self.minNormalISize = 0
+        self.minISizeCutoff = 0
+        self.maxNormalISize = 0
+        self.maxISizeCutoff = 0
+        self.abnormal_pairs = 0
+
+    def print_info(self):
+        print("Library Info:")
+        for key, value in self.__dict__.items():
+            print(f"{key}: {value}")
+
+def getLibraryParams(c: Config, validRegions, sampleLib):
+    samfiles = [pysam.AlignmentFile(f, 'r') for f in c.files]
+    for f in c.files:
+        pysam.index(f)
+    for file_c, file_name in enumerate(c.files):
+        maxAlignmentsScreened = 10000000
+        maxNumAlignments = 1000000
+        minNumAlignments = 1000
+        alignmentCount = 0
+        processedNumPairs = 0
+        processedNumReads = 0
+        rplus = 0
+        nonrplus = 0
+        vecISize = []
+        readSize = []
+
+        libCharacterized = False
+        samfile = samfiles[file_c]
+        for refIndex, refname in enumerate(samfile.references):
+            if not validRegions[refIndex]:
+                continue
+            for vRIt in validRegions[refIndex]:
+                for rec in samfile.fetch(refname, vRIt[0], vRIt[1]):
+                    # 是否为次要的对齐 rec.is_secondary， rec.tlen = insert size
+                    if not rec.is_read2 and rec.infer_read_length() < 65000:
+                        if rec.is_secondary or rec.is_qcfail or rec.is_duplicate or rec.is_supplementary or rec.is_unmapped:
+                            continue
+                        if alignmentCount > maxAlignmentsScreened or (processedNumReads >= maxNumAlignments and processedNumPairs == 0) or processedNumPairs >= maxNumAlignments:
+                            libCharacterized = True
+                            break
+                        alignmentCount += 1
+
+                        if processedNumReads < maxNumAlignments:
+                            readSize.append(rec.infer_read_length())
+                            processedNumReads += 1
+
+                        if rec.is_paired and not rec.mate_is_unmapped and rec.rname == rec.mrnm:
+                            if processedNumPairs < maxNumAlignments:
+                                vecISize.append(abs(rec.tlen))
+                                if getSVType(rec) == 2:
+                                    rplus += 1
+                                else:
+                                    nonrplus += 1
+                                processedNumPairs += 1
+                if libCharacterized:
+                    break
+            if libCharacterized:
+                break
+
+        if processedNumReads >= minNumAlignments:
+            readSize.sort()
+            sampleLib[file_c].rs = readSize[len(readSize) // 2] # Median
+
+        if processedNumPairs >= minNumAlignments:
+            vecISize.sort()
+            median = vecISize[len(vecISize) // 2]
+            absDev = [abs(i - median) for i in vecISize]
+            absDev.sort()
+            mad = absDev[len(absDev) // 2]
+
+            if 50 <= median <= 100000:
+                if rplus < nonrplus:
+                    print(f"Warning: Sample has a non-default paired-end layout! File: {file_name}")
+                    print("The expected paired-end orientation is ---Read1---> <---Read2--- which is the default illumina paired-end layout.")
+                else:
+                    lib = sampleLib[file_c]
+                    lib.median = median
+                    lib.mad = mad  # Median Absolute Deviation
+                    lib.maxNormalISize = median + (c.madNormalCutoff * mad)  # 正常范围threshold
+                    lib.minNormalISize = max(median - (c.madNormalCutoff * mad), 0)
+                    lib.maxISizeCutoff = max(median + (c.madCutoff * mad), max(2 * lib.rs, 500)) # 一个异常插入片段的阈值
+                    lib.minISizeCutoff = max(median - (c.madCutoff * mad), 0)
+
 class BamAlignRecord:
     def __init__(self, rec, pair_quality, alen, malen, median, mad, max_i_size):
         self.tid = rec.reference_id

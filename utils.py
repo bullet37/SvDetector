@@ -248,24 +248,6 @@ def sort_svs(sv1: StructuralVariantRecord, sv2: StructuralVariantRecord):
         return sv1.peSupport > sv2.peSupport
     return sv1.srSupport > sv2.srSupport
 
-class LibraryInfo:
-    def __init__(self, rs=0, median=0, mad=0, minNormalISize=0,
-                 minISizeCutoff=0, maxNormalISize=0, maxISizeCutoff=0, abnormal_pairs=0):
-        self.rs = rs
-        self.median = 0
-        self.mad = 0
-        self.minNormalISize = 0
-        self.minISizeCutoff = 0
-        self.maxNormalISize = 0
-        self.maxISizeCutoff = 0
-        self.abnormal_pairs = 0
-
-    def print_info(self):
-        print("Library Info:")
-        for key, value in self.__dict__.items():
-            print(f"{key}: {value}")
-
-
 
 def is_translocation(svt):
     SVT_TRANS = 5
