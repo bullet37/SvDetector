@@ -2,7 +2,9 @@
 from utils import *
 from utilsPE import *
 import math
-def search_cliquesPR(config: Config, comp_edge: TCompEdgeList, bam_record: List[BamAlignRecord],
+
+
+def search_cliquesPE(config: Config, comp_edge: TCompEdgeList, bam_record: List[PEAlignRecord],
                      svs: List[StructuralVariantRecord], svt: int):
     for comp_key, edge_list in comp_edge.items():
         edge_list.sort(key=cmp_to_key(sort_edge_records))
@@ -15,7 +17,8 @@ def search_cliquesPR(config: Config, comp_edge: TCompEdgeList, bam_record: List[
         wiggle = 0
         cluster_ref_id = bam_record[next(it_w_edge).source].tid
         cluster_mate_ref_id = bam_record[next(it_w_edge).source].mtid
-        sv_start, sv_end, wiggle = init_clique(bam_record[next(it_w_edge).source], sv_start=sv_start, sv_end=sv_end,wiggle= wiggle, svt=svt)
+        sv_start, sv_end, wiggle = init_clique(bam_record[next(it_w_edge).source], sv_start=sv_start, sv_end=sv_end,
+                                               wiggle=wiggle, svt=svt)
 
         if cluster_ref_id == cluster_mate_ref_id and sv_start >= sv_end:
             continue
@@ -35,21 +38,21 @@ def search_cliquesPR(config: Config, comp_edge: TCompEdgeList, bam_record: List[
                 if v is None or v in incompatible:
                     continue
 
-                clique_grow, sv_start, sv_end, wiggle= update_clique(bam_record[v], sv_start, sv_end, wiggle, svt)
+                clique_grow, sv_start, sv_end, wiggle = update_clique(bam_record[v], sv_start, sv_end, wiggle, svt)
 
                 if clique_grow:
                     clique.add(v)
                 else:
                     incompatible.add(v)
         # len(clique) = 91
-        if len(clique) >= config.minCliqueSize and sv_size_check(sv_start, sv_end, svt):
+        if len(clique) >= config.min_clique_size and sv_size_check(sv_start, sv_end, svt):
 
             sv_record = StructuralVariantRecord()
             sv_record.chr = cluster_ref_id
             sv_record.chr2 = cluster_mate_ref_id
-            sv_record.svStart = sv_start + 1
-            sv_record.svEnd = sv_end + 1
-            sv_record.peSupport = len(clique)
+            sv_record.sv_start = sv_start + 1
+            sv_record.sv_end = sv_end + 1
+            sv_record.pe_support = len(clique)
 
             ci_wiggle = max(abs(wiggle), 50)
             sv_record.ciposlow = -ci_wiggle
@@ -60,12 +63,12 @@ def search_cliquesPR(config: Config, comp_edge: TCompEdgeList, bam_record: List[
             sv_record.mapq = 0
             mapQV = []
             for itC in clique:
-                mapQV.append(bam_record[itC].mapQuality)
-                sv_record.mapq += bam_record[itC].mapQuality
+                mapQV.append(bam_record[itC].map_quality)
+                sv_record.mapq += bam_record[itC].map_quality
             mapQV.sort()
-            sv_record.peMapQuality = mapQV[len(mapQV) // 2]
-            sv_record.srSupport = 0
-            sv_record.srAlignQuality = 0
+            sv_record.pe_map_quality = mapQV[len(mapQV) // 2]
+            sv_record.sr_support = 0
+            sv_record.sr_align_quality = 0
             sv_record.precise = False
             sv_record.svt = svt
             sv_record.insLen = 0
@@ -73,7 +76,7 @@ def search_cliquesPR(config: Config, comp_edge: TCompEdgeList, bam_record: List[
             svs.append(sv_record)
 
 
-def clusterPR(c: Config, bam_record: List[BamAlignRecord], svs: List[StructuralVariantRecord], varisize: int, svt: int):
+def clusterPE(c: Config, bam_record: List[PEAlignRecord], svs: List[StructuralVariantRecord], varisize: int, svt: int):
     # Initialize variables
     comp = [0] * len(bam_record)
     num_comp = 0
@@ -90,7 +93,7 @@ def clusterPR(c: Config, bam_record: List[BamAlignRecord], svs: List[StructuralV
     for bam_it in bam_record:
         if bam_it_index > last_connected_node:
             if comp_edge:
-                search_cliquesPR(c, comp_edge, bam_record, svs, svt)
+                search_cliquesPE(c, comp_edge, bam_record, svs, svt)
                 last_connected_node_start = last_connected_node
                 comp_edge.clear()
         min_coord = min_coord_fn(bam_it.pos, bam_it.mpos, svt)
@@ -105,7 +108,8 @@ def clusterPR(c: Config, bam_record: List[BamAlignRecord], svs: List[StructuralV
             # Check that mate chromosomes agree (only for translocations)
             if bam_it.mtid != bam_it_next.mtid: continue
             # Check combinability of pairs
-            if pairs_disagree(min_coord, max_coord, bam_it.alen, bam_it.maxNormalISize, minCoord_next, maxCoord_next, bam_it_next.alen, bam_it_next.maxNormalISize, svt):
+            if pairs_disagree(min_coord, max_coord, bam_it.alen, bam_it.max_normal_isize, minCoord_next, maxCoord_next,
+                              bam_it_next.alen, bam_it_next.max_normal_isize, svt):
                 continue
 
             # Update last connected node
@@ -131,7 +135,8 @@ def clusterPR(c: Config, bam_record: List[BamAlignRecord], svs: List[StructuralV
                     comp[bamItIndexNext] = compIndex
                 else:
                     # Both vertices have a component
-                    if comp[bamItIndexNext] == comp[bam_it_index]:  compIndex = comp[bamItIndexNext]
+                    if comp[bamItIndexNext] == comp[bam_it_index]:
+                        compIndex = comp[bamItIndexNext]
                     else:
                         # Merge components
                         compIndex = comp[bam_it_index]
@@ -146,11 +151,12 @@ def clusterPR(c: Config, bam_record: List[BamAlignRecord], svs: List[StructuralV
                         del comp_edge[otherIndex]
 
             # Append new edge
-            if len(comp_edge[compIndex]) < c.graphPruning:
-                weight = int(math.log(abs(abs(minCoord_next - min_coord) - (maxCoord_next - max_coord)) - abs(bam_it.median - bam_it_next.median) + 1) / math.log(2))
+            if len(comp_edge[compIndex]) < c.graph_pruning:
+                weight = int(math.log(abs(abs(minCoord_next - min_coord) - (maxCoord_next - max_coord)) - abs(
+                    bam_it.median - bam_it_next.median) + 1) / math.log(2))
                 comp_edge[compIndex].append(EdgeRecord(bam_it_index, bamItIndexNext, weight))
 
             bamItIndexNext += 1
     if comp_edge:
-        search_cliquesPR(c, comp_edge, bam_record, svs, svt)
+        search_cliquesPE(c, comp_edge, bam_record, svs, svt)
         comp_edge.clear()

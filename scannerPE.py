@@ -3,25 +3,29 @@ import numpy as np
 from clusterPE import *
 import pysam
 import hashlib
+
+
 def hash_sr(rec):
     return hashlib.md5(str(rec).encode()).hexdigest()
 
-def getVariability(config, lib):
+
+def get_variability(config: Config, lib):
     overall_variability = 0
     for library in lib:
-        if library.maxNormalISize > overall_variability:
-            overall_variability = library.maxNormalISize
-        if library.rs > overall_variability:
-            overall_variability = library.rs
+        if library.max_normal_isize > overall_variability:
+            overall_variability = library.max_normal_isize
+        if library.read_size > overall_variability:
+            overall_variability = library.read_size
     return overall_variability
 
+
 def scanPE(c: Config, validRegions, svs: List[StructuralVariantRecord],
-                srSVs: List[StructuralVariantRecord], srStore, sampleLib: List[LibraryInfo]):
+           srSVs: List[StructuralVariantRecord], srStore, sampleLib: List[LibraryInfo]):
     samfile = [pysam.AlignmentFile(file, "rb") for file in c.files]
     hdr = samfile[0].header
 
     # Bam alignment record vector
-    bamRecords = [ list() for _ in range(2 * SVT_TRANS)]
+    bamRecords = [list() for _ in range(2 * SVT_TRANS)]
     # Iterate all samples
     for file_c in range(len(c.files)):
         matetra = [{} for _ in range(len(c.files))]
@@ -55,30 +59,31 @@ def scanPE(c: Config, validRegions, svs: List[StructuralVariantRecord],
                 for rec in iter:
 
                     if rec.flag & (pysam.FQCFAIL | pysam.FDUP | pysam.FUNMAP): continue
-                    if rec.mapping_quality < c.minMapQual or rec.tid < 0: continue
+                    if rec.mapping_quality < c.min_map_qual or rec.tid < 0: continue
                     # Paired-end clustering, build up bamRecord
                     seed = hash_sr(rec)
                     if rec.flag & (pysam.FPAIRED):
 
                         if sampleLib[file_c].median == 0: continue  # Single-end library
-                        if rec.flag & (pysam.FSECONDARY | pysam.FSUPPLEMENTARY): continue  # Secondary/supplementary alignments
+                        if rec.flag & (
+                                pysam.FSECONDARY | pysam.FSUPPLEMENTARY): continue  # Secondary/supplementary alignments
                         if rec.next_reference_id < 0 or rec.flag & pysam.FMUNMAP: continue  # Mate unmapped or blacklisted chr
                         if not validRegions[rec.next_reference_id]: continue
-                        if is_rec_translocation(rec) and rec.mapping_quality < c.minTraQual:  continue
+                        if is_rec_translocation(rec) and rec.mapping_quality < c.min_tra_qual:  continue
 
                         # SV type
-                        svt = isizeMappingPos(rec, sampleLib[file_c].maxISizeCutoff)
+                        svt = isizeMappingPos(rec, sampleLib[file_c].max_isize_cutoff)
                         if svt == -1: continue
                         if c.svtset and svt not in c.svtset: continue
 
                         # Check library-specific insert size for deletions
-                        if svt == 2 and sampleLib[file_c].maxISizeCutoff > np.abs(rec.isize): continue
+                        if svt == 2 and sampleLib[file_c].max_isize_cutoff > np.abs(rec.isize): continue
 
                         if rec.pos > lastAlignedPos:
                             lastAlignedPosReads.clear()
                             lastAlignedPos = rec.pos
 
-                        if firstPairObs(rec, lastAlignedPosReads):
+                        if first_pair_obs(rec, lastAlignedPosReads):
                             # First read
                             lastAlignedPosReads.add(seed)
                             hv = hash_pair(rec)
@@ -87,32 +92,33 @@ def scanPE(c: Config, validRegions, svs: List[StructuralVariantRecord],
                             else:
                                 mateMap[hv] = (rec.mapping_quality, alignmentLength(rec))
                         else:
-                          # Second read
-                          hv = hash_pair_mate(rec)
-                          alenmate = 0
-                          pairQuality = 0
-                          if is_translocation(svt):
-                              if hv in matetra[file_c] and matetra[file_c][hv][0]:
-                                  pairQuality = min(matetra[file_c][hv][0], rec.mapping_quality)
-                                  alenmate = matetra[file_c][hv][1]
-                                  matetra[file_c][hv] = (0, alenmate)
-                          else:
-                              if hv in mateMap and mateMap[hv][0]:
-                                  pairQuality = min(mateMap[hv][0], rec.mapping_quality)
-                                  alenmate = mateMap[hv][1]
-                                  mateMap[hv] = (0, alenmate)
+                            # Second read
+                            hv = hash_pair_mate(rec)
+                            alenmate = 0
+                            pairQuality = 0
+                            if is_translocation(svt):
+                                if hv in matetra[file_c] and matetra[file_c][hv][0]:
+                                    pairQuality = min(matetra[file_c][hv][0], rec.mapping_quality)
+                                    alenmate = matetra[file_c][hv][1]
+                                    matetra[file_c][hv] = (0, alenmate)
+                            else:
+                                if hv in mateMap and mateMap[hv][0]:
+                                    pairQuality = min(mateMap[hv][0], rec.mapping_quality)
+                                    alenmate = mateMap[hv][1]
+                                    mateMap[hv] = (0, alenmate)
 
-                          bamRecord = BamAlignRecord(rec, pairQuality, alignmentLength(rec), alenmate, sampleLib[file_c].median,
-                                         sampleLib[file_c].mad, sampleLib[file_c].maxNormalISize)
-                          bamRecords[svt].append(bamRecord)
-                          sampleLib[file_c].abnormal_pairs += 1
+                            bamRecord = PEAlignRecord(rec, pairQuality, alignmentLength(rec), alenmate,
+                                                      sampleLib[file_c].median,
+                                                      sampleLib[file_c].mad, sampleLib[file_c].max_normal_isize)
+                            bamRecords[svt].append(bamRecord)
+                            sampleLib[file_c].abnormal_pairs += 1
 
     # Maximum variability in insert size
-    varisize = getVariability(c, sampleLib)
+    varisize = get_variability(c, sampleLib)
     for svt in range(len(bamRecords)):
         if c.svtset and svt not in c.svtset: continue
         if not bamRecords[svt]: continue
         # Sort BAM records according to position
-        bamRecords[svt].sort(key=cmp_to_key(SortBamRecords))
+        bamRecords[svt].sort(key=cmp_to_key(sort_PERecords))
         # Cluster
-        clusterPR(c, bamRecords[svt], svs, varisize, svt)
+        clusterPE(c, bamRecords[svt], svs, varisize, svt)
