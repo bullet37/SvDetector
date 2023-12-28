@@ -81,82 +81,77 @@ def clusterPE(c: Config, bam_record: List[PEAlignRecord], svs: List[StructuralVa
     comp = [0] * len(bam_record)
     num_comp = 0
     # Edge lists for each component
-    TEdgeList = List[EdgeRecord]
-    TCompEdgeList = Dict[int, TEdgeList]
-    comp_edge: TCompEdgeList = {}
+    comp_edge = {}  # {int:[EdgeRecord1,EdgeRecord2...]}
 
     # Initialize iterators and counters
     last_connected_node = 0
     last_connected_node_start = 0
-    bam_it_index = 0
 
-    for bam_it in bam_record:
-        if bam_it_index > last_connected_node:
+    for i in range(len(bam_record)):
+        if i > last_connected_node:
             if comp_edge:
                 search_cliquesPE(c, comp_edge, bam_record, svs, svt)
                 last_connected_node_start = last_connected_node
                 comp_edge.clear()
-        min_coord = min_coord_fn(bam_it.pos, bam_it.mpos, svt)
-        max_coord = max_coord_fn(bam_it.pos, bam_it.mpos, svt)
-        bamItIndexNext = bam_it_index + 1
+        min_coord = min_coord_fn(bam_record[i].pos, bam_record[i].mpos, svt)
+        max_coord = max_coord_fn(bam_record[i].pos, bam_record[i].mpos, svt)
 
-        for bam_it_next in bam_record[bam_it_index + 1:]:
-            minCoord_next = min_coord_fn(bam_it_next.pos, bam_it_next.mpos, svt)
-            if not (abs(minCoord_next + bam_it_next.alen - min_coord) <= varisize): break
-            maxCoord_next = max_coord_fn(bam_it_next.pos, bam_it_next.mpos, svt)
+        for j in range(i + 1, len(bam_record)):
+            minCoord_next = min_coord_fn(bam_record[j].pos, bam_record[j].mpos, svt)
+            if not (abs(minCoord_next + bam_record[j].alen - min_coord) <= varisize): break
+            maxCoord_next = max_coord_fn(bam_record[j].pos, bam_record[j].mpos, svt)
 
             # Check that mate chromosomes agree (only for translocations)
-            if bam_it.mtid != bam_it_next.mtid: continue
+            if bam_record[i].mtid != bam_record[j].mtid: continue
             # Check combinability of pairs
-            if pairs_disagree(min_coord, max_coord, bam_it.alen, bam_it.max_normal_isize, minCoord_next, maxCoord_next,
-                              bam_it_next.alen, bam_it_next.max_normal_isize, svt):
+            if pairs_disagree(min_coord, max_coord, bam_record[i].alen, bam_record[i].max_normal_isize, minCoord_next, \
+                              maxCoord_next, bam_record[j].alen, bam_record[j].max_normal_isize, svt):
                 continue
 
             # Update last connected node
-            if bamItIndexNext > last_connected_node:
-                last_connected_node = bamItIndexNext
+            if j > last_connected_node:
+                last_connected_node = j
 
             # Assign components
-            compIndex = 0
-            if comp[bam_it_index] == 0:
-                if comp[bamItIndexNext] == 0:
+            comp_index = 0
+            if comp[i] == 0:
+                if comp[j] == 0:
                     # Both vertices have no component
                     num_comp += 1
-                    compIndex = num_comp
-                    comp[bam_it_index] = compIndex
-                    comp[bamItIndexNext] = compIndex
-                    comp_edge[compIndex] = []
+                    comp_index = num_comp
+                    comp[i] = comp_index
+                    comp[j] = comp_index
+                    comp_edge[comp_index] = []
                 else:
-                    compIndex = comp[bamItIndexNext]
-                    comp[bam_it_index] = compIndex
+                    comp_index = comp[j]
+                    comp[i] = comp_index
             else:
-                if comp[bamItIndexNext] == 0:
-                    compIndex = comp[bam_it_index]
-                    comp[bamItIndexNext] = compIndex
+                if comp[j] == 0:
+                    comp_index = comp[i]
+                    comp[j] = comp_index
                 else:
                     # Both vertices have a component
-                    if comp[bamItIndexNext] == comp[bam_it_index]:
-                        compIndex = comp[bamItIndexNext]
+                    if comp[j] == comp[i]:
+                        comp_index = comp[j]
                     else:
                         # Merge components
-                        compIndex = comp[bam_it_index]
-                        otherIndex = comp[bamItIndexNext]
-                        if otherIndex < compIndex:
-                            compIndex, otherIndex = otherIndex, compIndex
+                        comp_index = comp[i]
+                        other_index = comp[j]
+                        if other_index < comp_index:
+                            comp_index, other_index = other_index, comp_index
                         # Re-label other index
-                        for i in range(last_connected_node_start, last_connected_node + 1):
-                            if comp[i] == otherIndex:  comp[i] = compIndex
+                        for k in range(last_connected_node_start, last_connected_node + 1):
+                            if comp[k] == other_index:
+                                comp[k] = comp_index
                         # Merge edge lists
-                        comp_edge[compIndex].extend(comp_edge[otherIndex])
-                        del comp_edge[otherIndex]
+                        comp_edge[comp_index].extend(comp_edge[other_index])
+                        del comp_edge[other_index]
 
             # Append new edge
-            if len(comp_edge[compIndex]) < c.graph_pruning:
+            if len(comp_edge[comp_index]) < c.graph_pruning:
                 weight = int(math.log(abs(abs(minCoord_next - min_coord) - (maxCoord_next - max_coord)) - abs(
-                    bam_it.median - bam_it_next.median) + 1) / math.log(2))
-                comp_edge[compIndex].append(EdgeRecord(bam_it_index, bamItIndexNext, weight))
-
-            bamItIndexNext += 1
+                    bam_record[i].median - bam_record[j].median) + 1) / math.log(2))
+                comp_edge[comp_index].append(EdgeRecord(i, j, weight))
     if comp_edge:
         search_cliquesPE(c, comp_edge, bam_record, svs, svt)
         comp_edge.clear()
